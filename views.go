@@ -38,17 +38,29 @@ func RenderHeader(path string, stats *ScanStats, width int) string {
 	done := stats.Done.Load()
 	files := stats.FilesScanned.Load()
 	dirs := stats.DirsScanned.Load()
+	links := stats.SymlinksScanned.Load()
 	size := stats.TotalSize.Load()
+	errs := stats.Errors.Load()
 
 	var text string
 	if done {
-		text = fmt.Sprintf(" UnixDirStat  %s  %d files, %d dirs  %s", FormatSize(size), files, dirs, path)
+		text = fmt.Sprintf(" UnixDirStat  %s  %d files, %d dirs", FormatSize(size), files, dirs)
+		if links > 0 {
+			text += fmt.Sprintf(", %d links", links)
+		}
+		text += "  " + path
+		if errs > 0 {
+			text += fmt.Sprintf("  \u26a0 %d errors", errs)
+		}
 	} else {
 		current := ""
 		if v := stats.CurrentPath.Load(); v != nil {
 			current = ShortenPath(v.(string), width-40)
 		}
 		text = fmt.Sprintf(" Scanning… %s  %d files, %d dirs, %s", current, files, dirs, FormatSize(size))
+		if errs > 0 {
+			text += fmt.Sprintf("  \u26a0 %d", errs)
+		}
 	}
 
 	// Truncate / pad to exact width
@@ -68,7 +80,7 @@ func RenderHeader(path string, stats *ScanStats, width int) string {
 }
 
 func RenderFooter(width int) string {
-	keys := " q:quit   Tab:panel   ↑↓:nav   Enter:expand   r:rescan   /:path "
+	keys := " q:quit  Tab:panel  \u2191\u2193:nav  Enter:expand  d:del  .:hidden  r:rescan  /:path "
 	runeKeys := []rune(keys)
 	if len(runeKeys) > width {
 		runeKeys = runeKeys[:width]
@@ -84,13 +96,10 @@ func RenderFooter(width int) string {
 
 // ── Tree Panel ────────────────────────────────────────────────────
 
-func RenderTree(root *FileNode, cursor int, focused bool, width, height int) string {
-	if root == nil {
+func RenderTree(nodes []*TreeNode, totalSize int64, cursor int, focused bool, width, height int) string {
+	if len(nodes) == 0 {
 		return box(" No data yet…", width, height, focused)
 	}
-
-	nodes := FlattenTree(root, 20)
-	totalSize := root.Size
 
 	// Scroll window
 	maxVisible := height
@@ -123,10 +132,14 @@ func RenderTree(root *FileNode, cursor int, focused bool, width, height int) str
 		// Name with color
 		name := tn.Node.Name
 		var nameStyle lipgloss.Style
-		if tn.Node.IsDir {
+		switch {
+		case tn.Node.IsDir:
 			name += "/"
 			nameStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#7aa2f7")).Bold(true)
-		} else {
+		case tn.Node.IsSymlink:
+			name += "@"
+			nameStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#e0af68"))
+		default:
 			ext := filepath.Ext(name)
 			nameStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(ExtColor(ext)))
 		}
@@ -354,7 +367,7 @@ func box(content string, width, height int, focused bool) string {
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(borderFg).
 		Width(width - 2).   // -2 for left+right border chars
-		Height(height - 2).  // -2 for top+bottom border lines
+		Height(height - 2). // -2 for top+bottom border lines
 		Render(content)
 }
 

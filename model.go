@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -12,20 +14,43 @@ import (
 // scanUpdateMsg is sent periodically during scanning.
 type scanUpdateMsg struct{}
 
+// rebuildThrottle limits how often the (expensive) tree/extensions/treemap
+// rebuild runs during a scan. The header counter stays live because it
+// reads atomic stats directly on every render.
+const rebuildThrottle = 400 * time.Millisecond
+
+type modalKind int
+
+const (
+	modalNone modalKind = iota
+	modalConfirmDelete
+	modalMessage
+)
+
 // Model is the BubbleTea model for UnixDirStat.
 type Model struct {
-	scanner   *Scanner
-	path      string
-	exts      []*ExtGroup
-	treemap   []TreemapItem
-	focus     FocusState
-	input     textinput.Model
-	inputMode bool
-	ready     bool
-	viewDims  ViewDims
+	scanner    *Scanner
+	path       string
+	cfg        ScanConfig
+	exts       []*ExtGroup
+	treemap    []TreemapItem
+	flatTree   []*TreeNode
+	focus      FocusState
+	input      textinput.Model
+	inputMode  bool
+	showHidden bool
+	ready      bool
+	viewDims   ViewDims
+
+	lastRebuild time.Time
+
+	// modal state
+	modal     modalKind
+	modalNode *FileNode
+	modalMsg  string
 }
 
-func NewModel(path string) Model {
+func NewModel(path string, cfg ScanConfig) Model {
 	ti := textinput.New()
 	ti.Placeholder = "/path/to/scan"
 	ti.Focus()
@@ -33,12 +58,12 @@ func NewModel(path string) Model {
 	ti.Width = 50
 
 	return Model{
-		path:    path,
-		scanner: NewScanner(path),
-		input:   ti,
-		focus: FocusState{
-			ActivePanel: TreePanel,
-		},
+		path:       path,
+		cfg:        cfg,
+		scanner:    NewScanner(path, cfg),
+		input:      ti,
+		showHidden: true,
+		focus:      FocusState{ActivePanel: TreePanel},
 	}
 }
 
@@ -71,6 +96,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		if m.modal != modalNone {
+			return m.handleModal(msg)
+		}
 		if m.inputMode {
 			return m.handleInputMode(msg)
 		}
@@ -78,7 +106,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case scanUpdateMsg:
 		if m.scanner != nil {
-			m.rebuildViews()
+			now := time.Now()
+			if m.scanner.Stats.Done.Load() || now.Sub(m.lastRebuild) >= rebuildThrottle {
+				m.rebuildViews()
+				m.lastRebuild = now
+			}
 			if m.scanner.Stats.Done.Load() {
 				return m, nil
 			}
@@ -99,19 +131,20 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.focus.ActivePanel = (m.focus.ActivePanel + 1) % 3
 
 	case "r":
-		m.scanner = NewScanner(m.path)
-		m.exts = nil
-		m.treemap = nil
-		ch := m.scanner.Run()
-		return m, tea.Batch(
-			func() tea.Msg { <-ch; return scanUpdateMsg{} },
-			m.pollUpdates(),
-		)
+		return m, m.rescan()
 
 	case "/":
 		m.inputMode = true
 		m.input.SetValue(m.path)
 		return m, textinput.Blink
+
+	case ".":
+		// Toggle visibility of dotfiles in the tree/extensions views.
+		m.showHidden = !m.showHidden
+		m.rebuildViews()
+
+	case "d", "D":
+		return m.startDelete(), nil
 
 	case "up", "k":
 		m.moveCursor(-1)
@@ -132,15 +165,8 @@ func (m *Model) handleInputMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		path := strings.TrimSpace(m.input.Value())
 		if path != "" {
 			m.path = path
-			m.scanner = NewScanner(path)
-			m.exts = nil
-			m.treemap = nil
 			m.inputMode = false
-			ch := m.scanner.Run()
-			return m, tea.Batch(
-				func() tea.Msg { <-ch; return scanUpdateMsg{} },
-				m.pollUpdates(),
-			)
+			return m, m.rescan()
 		}
 		m.inputMode = false
 		return m, nil
@@ -155,21 +181,95 @@ func (m *Model) handleInputMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+// handleModal routes keys while a modal is open.
+func (m *Model) handleModal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch m.modal {
+	case modalConfirmDelete:
+		switch msg.String() {
+		case "y", "Y", "enter":
+			node := m.modalNode
+			m.modal = modalNone
+			m.modalNode = nil
+			if node == nil {
+				return m, nil
+			}
+			var err error
+			if node.IsDir {
+				err = os.RemoveAll(node.Path)
+			} else {
+				err = os.Remove(node.Path)
+			}
+			if err != nil {
+				m.modal = modalMessage
+				m.modalMsg = "Delete failed: " + err.Error()
+				return m, nil
+			}
+			return m, m.rescan()
+
+		case "n", "N", "esc":
+			m.modal = modalNone
+			m.modalNode = nil
+			return m, nil
+		}
+		return m, nil
+
+	case modalMessage:
+		// Any key dismisses the message.
+		m.modal = modalNone
+		m.modalMsg = ""
+		return m, nil
+	}
+	return m, nil
+}
+
+// startDelete opens the confirm modal for the node under the tree cursor.
+// Refuses to delete the scan root.
+func (m *Model) startDelete() tea.Model {
+	if m.focus.ActivePanel != TreePanel || m.scanner == nil || m.scanner.RootNode == nil {
+		return m
+	}
+	nodes := m.flatTree
+	if m.focus.TreeCursor < 0 || m.focus.TreeCursor >= len(nodes) {
+		return m
+	}
+	node := nodes[m.focus.TreeCursor].Node
+	if node == m.scanner.RootNode {
+		m.modal = modalMessage
+		m.modalMsg = "Refusing to delete the scan root: " + node.Path
+		return m
+	}
+	m.modal = modalConfirmDelete
+	m.modalNode = node
+	return m
+}
+
+// rescan re-creates the scanner with the current path+config and clears
+// all derived view state.
+func (m *Model) rescan() tea.Cmd {
+	m.scanner = NewScanner(m.path, m.cfg)
+	m.exts = nil
+	m.treemap = nil
+	m.flatTree = nil
+	ch := m.scanner.Run()
+	return tea.Batch(
+		func() tea.Msg { <-ch; return scanUpdateMsg{} },
+		m.pollUpdates(),
+	)
+}
+
 func (m *Model) moveCursor(delta int) {
 	switch m.focus.ActivePanel {
 	case TreePanel:
-		if m.scanner != nil && m.scanner.RootNode != nil {
-			nodes := FlattenTree(m.scanner.RootNode, 20)
-			m.focus.TreeCursor += delta
-			if m.focus.TreeCursor < 0 {
-				m.focus.TreeCursor = 0
-			}
-			if m.focus.TreeCursor >= len(nodes) {
-				m.focus.TreeCursor = len(nodes) - 1
-			}
-			// Rebuild treemap for the node under cursor
-			m.rebuildTreemapForSelection()
+		nodes := m.flatTree
+		m.focus.TreeCursor += delta
+		if m.focus.TreeCursor < 0 {
+			m.focus.TreeCursor = 0
 		}
+		if nodes != nil && m.focus.TreeCursor >= len(nodes) {
+			m.focus.TreeCursor = len(nodes) - 1
+		}
+		m.rebuildTreemapForSelection()
+
 	case ExtPanel:
 		m.focus.ExtCursor += delta
 		if m.focus.ExtCursor < 0 {
@@ -182,14 +282,17 @@ func (m *Model) moveCursor(delta int) {
 }
 
 func (m *Model) handleEnter() {
-	if m.focus.ActivePanel == TreePanel && m.scanner != nil && m.scanner.RootNode != nil {
-		nodes := FlattenTree(m.scanner.RootNode, 20)
-		if m.focus.TreeCursor >= 0 && m.focus.TreeCursor < len(nodes) {
-			node := nodes[m.focus.TreeCursor].Node
-			if node.IsDir {
-				node.Expanded = !node.Expanded
-			}
-		}
+	if m.focus.ActivePanel != TreePanel || m.scanner == nil || m.scanner.RootNode == nil {
+		return
+	}
+	nodes := m.flatTree
+	if m.focus.TreeCursor < 0 || m.focus.TreeCursor >= len(nodes) {
+		return
+	}
+	node := nodes[m.focus.TreeCursor].Node
+	if node.IsDir {
+		node.Expanded = !node.Expanded
+		m.rebuildViews()
 	}
 }
 
@@ -199,19 +302,17 @@ func (m *Model) rebuildTreemapForSelection() {
 	if m.scanner == nil || m.scanner.RootNode == nil {
 		return
 	}
-	nodes := FlattenTree(m.scanner.RootNode, 20)
-	if m.focus.TreeCursor < 0 || m.focus.TreeCursor >= len(nodes) {
+	nodes := m.flatTree
+	if len(nodes) == 0 || m.focus.TreeCursor < 0 || m.focus.TreeCursor >= len(nodes) {
 		return
 	}
 	selected := nodes[m.focus.TreeCursor].Node
 
-	// If the selected node is a directory, show its children
+	// If the selected node is a directory, show its children; otherwise
+	// show the parent's children (highlighting context for the file).
 	target := selected
-	if !selected.IsDir {
-		// If it's a file, show its parent's children (highlight the file)
-		if selected.Parent != nil {
-			target = selected.Parent
-		}
+	if !selected.IsDir && selected.Parent != nil {
+		target = selected.Parent
 	}
 
 	tw := m.viewDims.TreemapW - 4 // account for borders
@@ -235,7 +336,7 @@ func (m *Model) recalcLayout() {
 
 	usableH := h - 2 // header + footer
 	topH := usableH * 2 / 5
-	bottomH := usableH - topH
+	// bottomH := usableH - topH
 
 	// Width: tree 60%, extensions 40%
 	treeW := w * 3 / 5
@@ -246,19 +347,39 @@ func (m *Model) recalcLayout() {
 	m.viewDims.ExtW = extW
 	m.viewDims.ExtH = topH - borderOverhead
 	m.viewDims.TreemapW = w
-	m.viewDims.TreemapH = bottomH - borderOverhead
+	m.viewDims.TreemapH = (usableH - topH) - borderOverhead
 }
 
+// rebuildViews recomputes all derived view state: the flat (visible) tree,
+// the extension groups, and the treemap. Cursor positions are clamped.
 func (m *Model) rebuildViews() {
 	if m.scanner == nil || m.scanner.RootNode == nil {
 		return
 	}
-
 	if !m.scanner.RootNode.Expanded {
 		m.scanner.RootNode.Expanded = true
 	}
 
-	m.exts = GroupByExtension(m.scanner.RootNode)
+	m.flatTree = FlattenTree(m.scanner.RootNode, maxTreeDepth, m.showHidden)
+	m.exts = GroupByExtension(m.scanner.RootNode, m.showHidden)
+
+	if nodes := m.flatTree; nodes != nil {
+		if m.focus.TreeCursor >= len(nodes) {
+			m.focus.TreeCursor = len(nodes) - 1
+		}
+		if m.focus.TreeCursor < 0 {
+			m.focus.TreeCursor = 0
+		}
+	}
+	if m.exts != nil {
+		if m.focus.ExtCursor >= len(m.exts) {
+			m.focus.ExtCursor = len(m.exts) - 1
+		}
+		if m.focus.ExtCursor < 0 {
+			m.focus.ExtCursor = 0
+		}
+	}
+
 	m.rebuildTreemapForSelection()
 }
 
@@ -266,30 +387,18 @@ func (m Model) View() string {
 	if !m.ready {
 		return "Loading…"
 	}
-
-	w, h := m.viewDims.Width, m.viewDims.Height
-
-	if m.inputMode {
-		var sb strings.Builder
-		stats := &ScanStats{}
-		if m.scanner != nil {
-			stats = &m.scanner.Stats
-		}
-		sb.WriteString(RenderHeader(m.path, stats, w))
-		sb.WriteString("\n\n\n")
-		prompt := lipgloss.NewStyle().Foreground(lipgloss.Color("#7aa2f7")).Bold(true).Render("  Scan path:")
-		sb.WriteString(prompt + "\n\n  " + m.input.View())
-		sb.WriteString("\n\n  " + lipgloss.NewStyle().Foreground(lipgloss.Color("#565f89")).Render("Enter to scan, Esc to cancel."))
-		lines := strings.Count(sb.String(), "\n")
-		for lines < h-2 {
-			sb.WriteString("\n")
-			lines++
-		}
-		sb.WriteString(RenderFooter(w))
-		return sb.String()
+	if m.modal != modalNone {
+		return m.renderModalScreen()
 	}
+	if m.inputMode {
+		return m.renderInputScreen()
+	}
+	return m.renderMain()
+}
 
+func (m Model) renderMain() string {
 	var sb strings.Builder
+	w := m.viewDims.Width
 
 	stats := &ScanStats{}
 	rootSize := int64(0)
@@ -307,7 +416,7 @@ func (m Model) View() string {
 	treeFocused := m.focus.ActivePanel == TreePanel
 	extFocused := m.focus.ActivePanel == ExtPanel
 
-	treeView := RenderTree(rootNode, m.focus.TreeCursor, treeFocused,
+	treeView := RenderTree(m.flatTree, rootSize, m.focus.TreeCursor, treeFocused,
 		m.viewDims.TreeW, m.viewDims.TreeH)
 	extView := RenderExtensions(m.exts, m.focus.ExtCursor, extFocused,
 		rootSize, m.viewDims.ExtW, m.viewDims.ExtH)
@@ -325,4 +434,94 @@ func (m Model) View() string {
 	sb.WriteString(RenderFooter(w))
 
 	return sb.String()
+}
+
+func (m Model) renderInputScreen() string {
+	var sb strings.Builder
+	w, h := m.viewDims.Width, m.viewDims.Height
+	stats := &ScanStats{}
+	if m.scanner != nil {
+		stats = &m.scanner.Stats
+	}
+	sb.WriteString(RenderHeader(m.path, stats, w))
+	sb.WriteString("\n\n\n")
+	prompt := lipgloss.NewStyle().Foreground(lipgloss.Color("#7aa2f7")).Bold(true).Render("  Scan path:")
+	sb.WriteString(prompt + "\n\n  " + m.input.View())
+	sb.WriteString("\n\n  " + lipgloss.NewStyle().Foreground(lipgloss.Color("#565f89")).Render("Enter to scan, Esc to cancel."))
+	lines := strings.Count(sb.String(), "\n")
+	for lines < h-2 {
+		sb.WriteString("\n")
+		lines++
+	}
+	sb.WriteString(RenderFooter(w))
+	return sb.String()
+}
+
+func (m Model) renderModalScreen() string {
+	var sb strings.Builder
+	w, h := m.viewDims.Width, m.viewDims.Height
+	stats := &ScanStats{}
+	if m.scanner != nil {
+		stats = &m.scanner.Stats
+	}
+	sb.WriteString(RenderHeader(m.path, stats, w))
+	sb.WriteString("\n")
+
+	var title, body, hint string
+	switch m.modal {
+	case modalConfirmDelete:
+		node := m.modalNode
+		title = "Confirm delete"
+		kind := "file"
+		path := "?"
+		size := "?"
+		if node != nil {
+			if node.IsDir {
+				kind = "directory (recursive)"
+			}
+			if node.IsSymlink {
+				kind = "symlink"
+			}
+			path = node.Path
+			size = FormatSize(node.Size)
+		}
+		body = fmt.Sprintf("Delete this %s?\n\n  %s\n  Size: %s", kind, path, size)
+		hint = "y: delete   n / esc: cancel"
+
+	case modalMessage:
+		title = "Message"
+		body = m.modalMsg
+		hint = "Press any key to dismiss"
+	}
+
+	titleStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#f7768e")).Bold(true)
+	boxStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("#f7768e")).
+		Padding(1, 2).
+		Width(minInt(w-6, 72))
+
+	modalContent := titleStyle.Render(title) + "\n\n" +
+		lipgloss.NewStyle().Foreground(lipgloss.Color("#c0caf5")).Render(body) + "\n\n" +
+		lipgloss.NewStyle().Foreground(lipgloss.Color("#565f89")).Render(hint)
+	rendered := boxStyle.Render(modalContent)
+
+	availH := h - 2
+	if availH < 1 {
+		availH = 1
+	}
+	centered := lipgloss.Place(w, availH, lipgloss.Center, lipgloss.Center, rendered,
+		lipgloss.WithWhitespaceChars(" "))
+	sb.WriteString(centered)
+	sb.WriteString("\n")
+	sb.WriteString(RenderFooter(w))
+	return sb.String()
+}
+
+// minInt is a tiny helper (kept explicit for clarity alongside ints).
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

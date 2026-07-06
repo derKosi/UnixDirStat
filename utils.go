@@ -2,8 +2,8 @@ package main
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -16,49 +16,45 @@ type ExtGroup struct {
 }
 
 // GroupByExtension walks the tree and groups files by extension.
-func GroupByExtension(root *FileNode) []*ExtGroup {
+// When showHidden is false, dotfiles and dot-directories are excluded.
+func GroupByExtension(root *FileNode, showHidden bool) []*ExtGroup {
 	groups := map[string]*ExtGroup{}
-	walkExtensions(root, groups)
+	walkExtensions(root, groups, showHidden)
 
 	result := make([]*ExtGroup, 0, len(groups))
 	for _, g := range groups {
 		result = append(result, g)
 	}
-	// Sort by size descending
-	sortBySize(result)
+	// Sort by size descending.
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].Size > result[j].Size
+	})
 	return result
 }
 
-func walkExtensions(node *FileNode, groups map[string]*ExtGroup) {
+func walkExtensions(node *FileNode, groups map[string]*ExtGroup, showHidden bool) {
 	if node == nil {
 		return
 	}
-	if !node.IsDir {
-		ext := strings.ToLower(filepath.Ext(node.Name))
-		if ext == "" {
-			ext = "(none)"
-		}
-		color := ExtColor(ext)
-		if g, ok := groups[ext]; ok {
-			g.Size += node.Size
-			g.Count++
-		} else {
-			groups[ext] = &ExtGroup{Ext: ext, Color: color, Size: node.Size, Count: 1}
-		}
-	}
 	for _, child := range node.Children {
-		walkExtensions(child, groups)
-	}
-}
-
-func sortBySize(groups []*ExtGroup) {
-	// Simple insertion sort (fine for typical extension counts ~50-200)
-	for i := 1; i < len(groups); i++ {
-		j := i
-		for j > 0 && groups[j].Size > groups[j-1].Size {
-			groups[j], groups[j-1] = groups[j-1], groups[j]
-			j--
+		if !showHidden && IsHidden(child.Name) {
+			continue
 		}
+		if !child.IsDir {
+			ext := strings.ToLower(filepath.Ext(child.Name))
+			if ext == "" {
+				ext = "(none)"
+			}
+			color := ExtColor(ext)
+			if g, ok := groups[ext]; ok {
+				g.Size += child.Size
+				g.Count++
+			} else {
+				groups[ext] = &ExtGroup{Ext: ext, Color: color, Size: child.Size, Count: 1}
+			}
+			continue
+		}
+		walkExtensions(child, groups, showHidden)
 	}
 }
 
@@ -95,14 +91,4 @@ func FormatPct(part, total int64) string {
 // IsHidden returns true if the file name starts with '.'.
 func IsHidden(name string) bool {
 	return strings.HasPrefix(name, ".")
-}
-
-// CanRead checks if we can read a directory.
-func CanRead(path string) bool {
-	f, err := os.Open(path)
-	if err != nil {
-		return false
-	}
-	f.Close()
-	return true
 }

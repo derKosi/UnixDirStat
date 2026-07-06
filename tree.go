@@ -1,27 +1,31 @@
 package main
 
 import (
-	"path/filepath"
 	"sort"
 	"strings"
 )
 
+// maxTreeDepth bounds how deep the flattened tree view descends.
+const maxTreeDepth = 20
+
 // TreeNode represents a visible row in the tree view.
 type TreeNode struct {
-	Node     *FileNode
-	Depth    int
-	IsLast   bool
-	Prefix   string // tree drawing prefix (│ ├ └ etc.)
+	Node   *FileNode
+	Depth  int
+	IsLast bool
+	Prefix string // tree drawing prefix (│ ├ └ etc.)
 }
 
-// FlattenTree returns visible nodes for the tree view, respecting Expanded state.
-func FlattenTree(root *FileNode, maxDepth int) []*TreeNode {
+// FlattenTree returns visible nodes for the tree view, respecting Expanded
+// state. When showHidden is false, dotfiles (and their subtrees) are hidden.
+// The root is always included.
+func FlattenTree(root *FileNode, maxDepth int, showHidden bool) []*TreeNode {
 	var result []*TreeNode
-	flattenRecursive(root, "", true, 0, maxDepth, &result)
+	flattenRecursive(root, "", true, 0, maxDepth, showHidden, &result)
 	return result
 }
 
-func flattenRecursive(node *FileNode, prefix string, isLast bool, depth, maxDepth int, result *[]*TreeNode) {
+func flattenRecursive(node *FileNode, prefix string, isLast bool, depth, maxDepth int, showHidden bool, result *[]*TreeNode) {
 	if node == nil || depth > maxDepth {
 		return
 	}
@@ -35,7 +39,7 @@ func flattenRecursive(node *FileNode, prefix string, isLast bool, depth, maxDept
 	*result = append(*result, tn)
 
 	if node.IsDir && node.Expanded && depth < maxDepth {
-		// Sort children: directories first, then by size descending
+		// Sort children: directories first, then by size descending.
 		children := make([]*FileNode, len(node.Children))
 		copy(children, node.Children)
 		sort.Slice(children, func(i, j int) bool {
@@ -46,6 +50,9 @@ func flattenRecursive(node *FileNode, prefix string, isLast bool, depth, maxDept
 		})
 
 		for i, child := range children {
+			if !showHidden && IsHidden(child.Name) {
+				continue
+			}
 			childPrefix := prefix
 			if depth > 0 {
 				if isLast {
@@ -55,7 +62,7 @@ func flattenRecursive(node *FileNode, prefix string, isLast bool, depth, maxDept
 				}
 			}
 			childIsLast := i == len(children)-1
-			flattenRecursive(child, childPrefix, childIsLast, depth+1, maxDepth, result)
+			flattenRecursive(child, childPrefix, childIsLast, depth+1, maxDepth, showHidden, result)
 		}
 	}
 }
@@ -80,35 +87,6 @@ func (tn *TreeNode) ExpandIndicator() string {
 		return "▾"
 	}
 	return "▸"
-}
-
-// RelPath returns the display name relative to the scan root.
-func RelPath(node *FileNode, rootPath string) string {
-	if node.Path == rootPath {
-		return filepath.Base(rootPath)
-	}
-	rel, err := filepath.Rel(rootPath, node.Path)
-	if err != nil {
-		return node.Name
-	}
-	return rel
-}
-
-// FindNodeAtPath finds the node at the given tree index and toggles its expansion.
-func FindNodeByIndex(root *FileNode, index int) *FileNode {
-	visible := FlattenTree(root, 20)
-	if index < 0 || index >= len(visible) {
-		return nil
-	}
-	return visible[index].Node
-}
-
-// CountChildren returns the number of direct children.
-func CountChildren(node *FileNode) int {
-	if node == nil {
-		return 0
-	}
-	return len(node.Children)
 }
 
 // ShortenPath shortens a path for display.

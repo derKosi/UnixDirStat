@@ -76,5 +76,3 @@ func ExtColor(ext string) string {
 	idx := h.Sum32() % uint32(len(fallbackColors))
 	return fallbackColors[idx]
 }
-
-// DirColor for directory rectangles — not used, dirColor in treemap.go is used instead.
