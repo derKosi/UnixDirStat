@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -44,7 +45,7 @@ func TestGroupByExtension(t *testing.T) {
 	ch := s.Run()
 	<-ch
 
-	exts := GroupByExtension(s.RootNode)
+	exts := GroupByExtension(s.RootNode, true)
 	if len(exts) != 2 {
 		t.Fatalf("expected 2 extensions, got %d", len(exts))
 	}
@@ -108,7 +109,7 @@ func TestFlattenTree(t *testing.T) {
 
 	// Expand root
 	s.RootNode.Expanded = true
-	nodes := FlattenTree(s.RootNode, 20)
+	nodes := FlattenTree(s.RootNode, maxTreeDepth, true)
 
 	// Should have: root, a.txt, sub/, = 3
 	if len(nodes) < 3 {
@@ -121,7 +122,7 @@ func TestFlattenTree(t *testing.T) {
 			n.Node.Expanded = true
 		}
 	}
-	nodes2 := FlattenTree(s.RootNode, 20)
+	nodes2 := FlattenTree(s.RootNode, maxTreeDepth, true)
 	// root + a.txt + sub/ + sub/b.txt = 4
 	if len(nodes2) != 4 {
 		t.Errorf("expected 4 nodes after expand, got %d", len(nodes2))
@@ -193,9 +194,86 @@ func TestBuildTreemapItems(t *testing.T) {
 	}
 }
 
+// TestSymlinkNotFollowed: with default config (follow=false) a symlink is
+// recorded as a link node and NOT recursed into (no loop risk).
+func TestSymlinkNotFollowed(t *testing.T) {
+	tmp := t.TempDir()
+	os.Mkdir(filepath.Join(tmp, "real"), 0755)
+	os.WriteFile(filepath.Join(tmp, "real", "f.txt"), []byte("data"), 0644)
+	// "link" -> "real"
+	if err := os.Symlink(filepath.Join(tmp, "real"), filepath.Join(tmp, "link")); err != nil {
+		t.Skipf("symlink not supported: %v", err)
+	}
+
+	s := NewScanner(tmp) // default: follow=false
+	<-s.Run()
+	if !s.Stats.Done.Load() {
+		t.Fatal("scan not done")
+	}
+
+	var link *FileNode
+	for _, c := range s.RootNode.Children {
+		if c.Name == "link" {
+			link = c
+		}
+	}
+	if link == nil {
+		t.Fatal("symlink node not recorded")
+	}
+	if !link.IsSymlink {
+		t.Error("expected IsSymlink")
+	}
+	if link.IsDir {
+		t.Error("not-followed symlink must not be marked IsDir")
+	}
+	if got := s.Stats.SymlinksScanned.Load(); got != 1 {
+		t.Errorf("expected 1 symlink, got %d", got)
+	}
+}
+
+// TestSymlinkCycleFollowTerminates: with follow=true and a symlink cycle,
+// the scan must still terminate thanks to cycle protection.
+func TestSymlinkCycleFollowTerminates(t *testing.T) {
+	tmp := t.TempDir()
+	os.Mkdir(filepath.Join(tmp, "sub"), 0755)
+	os.WriteFile(filepath.Join(tmp, "sub", "f.txt"), []byte("x"), 0644)
+	// symlink inside sub pointing back to tmp -> cycle
+	if err := os.Symlink(tmp, filepath.Join(tmp, "sub", "loop")); err != nil {
+		t.Skipf("symlink not supported: %v", err)
+	}
+
+	s := NewScanner(tmp, ScanConfig{FollowSymlinks: true})
+	<-s.Run()
+	if !s.Stats.Done.Load() {
+		t.Fatal("scan with cycle did not terminate")
+	}
+	if got := s.Stats.FilesScanned.Load(); got < 1 {
+		t.Errorf("expected at least 1 file, got %d", got)
+	}
+}
+
+// TestHiddenToggle: showHidden controls whether dotfiles appear in the
+// flattened tree (display-level; the scanner always scans everything).
+func TestHiddenToggle(t *testing.T) {
+	tmp := t.TempDir()
+	os.WriteFile(filepath.Join(tmp, ".secret"), []byte("hh"), 0644)
+	os.WriteFile(filepath.Join(tmp, "visible"), []byte("vv"), 0644)
+
+	s := NewScanner(tmp)
+	<-s.Run()
+	s.RootNode.Expanded = true
+
+	hidden := FlattenTree(s.RootNode, maxTreeDepth, false)
+	shown := FlattenTree(s.RootNode, maxTreeDepth, true)
+	if len(hidden) != 2 { // root + visible
+		t.Errorf("hidden-off: expected 2 nodes, got %d", len(hidden))
+	}
+	if len(shown) != 3 { // root + .secret + visible
+		t.Errorf("hidden-on: expected 3 nodes, got %d", len(shown))
+	}
+}
+
 func TestMain(m *testing.M) {
 	// Suppress BubbleTea TUI, just run tests
 	os.Exit(m.Run())
 }
-
-

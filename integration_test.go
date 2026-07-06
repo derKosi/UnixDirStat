@@ -21,16 +21,16 @@ func TestLargeDir(t *testing.T) {
 	}
 
 	files := map[string]int{
-		"src/main.go":      500,
-		"src/cmd/run.go":   2000,
-		"src/lib/util.go":  1500,
-		"src/lib/db.go":    3000,
-		"docs/readme.md":   400,
-		"docs/api.md":      800,
-		"tests/main_test":  1200,
-		"Makefile":         100,
-		"go.mod":           50,
-		".gitignore":       20,
+		"src/main.go":     500,
+		"src/cmd/run.go":  2000,
+		"src/lib/util.go": 1500,
+		"src/lib/db.go":   3000,
+		"docs/readme.md":  400,
+		"docs/api.md":     800,
+		"tests/main_test": 1200,
+		"Makefile":        100,
+		"go.mod":          50,
+		".gitignore":      20,
 	}
 
 	for name, size := range files {
@@ -59,7 +59,7 @@ func TestLargeDir(t *testing.T) {
 	}
 
 	// Test extensions
-	exts := GroupByExtension(s.RootNode)
+	exts := GroupByExtension(s.RootNode, true)
 	if len(exts) == 0 {
 		t.Fatal("should have extensions")
 	}
@@ -87,7 +87,7 @@ func TestLargeDir(t *testing.T) {
 
 	// Test tree expansion
 	s.RootNode.Expanded = true
-	nodes := FlattenTree(s.RootNode, 20)
+	nodes := FlattenTree(s.RootNode, maxTreeDepth, true)
 	fmt.Printf("  Tree has %d visible nodes (expanded root)\n", len(nodes))
 
 	// Expand src/
@@ -96,7 +96,7 @@ func TestLargeDir(t *testing.T) {
 			n.Node.Expanded = true
 		}
 	}
-	nodes2 := FlattenTree(s.RootNode, 20)
+	nodes2 := FlattenTree(s.RootNode, maxTreeDepth, true)
 	fmt.Printf("  Tree has %d visible nodes (expanded src)\n", len(nodes2))
 	if len(nodes2) <= len(nodes) {
 		t.Error("expanding src should show more nodes")
@@ -135,7 +135,7 @@ func TestEmptyDir(t *testing.T) {
 		t.Errorf("expected 0 size, got %d", s.RootNode.Size)
 	}
 
-	exts := GroupByExtension(s.RootNode)
+	exts := GroupByExtension(s.RootNode, true)
 	if len(exts) != 0 {
 		t.Errorf("expected 0 extensions, got %d", len(exts))
 	}
@@ -151,7 +151,7 @@ func TestNoExt(t *testing.T) {
 	ch := s.Run()
 	<-ch
 
-	exts := GroupByExtension(s.RootNode)
+	exts := GroupByExtension(s.RootNode, true)
 	if len(exts) != 1 {
 		t.Fatalf("expected 1 extension group (none), got %d", len(exts))
 	}
