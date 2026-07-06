@@ -1,0 +1,4 @@
+/unixdirstat
+*.test
+*.out
+coverage.*
