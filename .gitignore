@@ -1,4 +1,5 @@
 /unixdirstat
+/UnixDirStat
 *.test
 *.out
 coverage.*
