@@ -98,23 +98,16 @@ func runHeadless(abs string, cfg ScanConfig) {
 	}
 
 	fmt.Printf("\nTop-level contents:\n")
-	// Sort by size (desc) via insertion sort — small N at top level.
-	children := make([]*FileNode, len(s.RootNode.Children))
-	copy(children, s.RootNode.Children)
-	for i := 1; i < len(children); i++ {
-		for j := i; j > 0 && children[j].Size > children[j-1].Size; j-- {
-			children[j], children[j-1] = children[j-1], children[j]
-		}
-	}
+	children := BuildTreemapItems(s.RootNode)
 	for _, child := range children {
 		icon := "F"
-		if child.IsDir {
+		if child.Node.IsDir {
 			icon = "D"
 		}
-		if child.IsSymlink {
+		if child.Node.IsSymlink {
 			icon = "L"
 		}
-		fmt.Printf("  %s %-30s %8s  %5s\n", icon, child.Name, FormatSize(child.Size), FormatPct(child.Size, s.RootNode.Size))
+		fmt.Printf("  %s %-30s %8s  %5s\n", icon, child.Node.Name, FormatSize(child.Node.Size), FormatPct(child.Node.Size, s.RootNode.Size))
 	}
 
 	items := BuildTreemapItems(s.RootNode)

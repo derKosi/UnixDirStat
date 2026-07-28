@@ -29,9 +29,11 @@ func TestScannerBasic(t *testing.T) {
 	if s.RootNode.Size != 22 {
 		t.Errorf("expected root size 22, got %d", s.RootNode.Size)
 	}
-	if !s.RootNode.Expanded {
-		// Just check it starts false (expand is a UI concern)
-		t.Log("root not expanded (expected)")
+	if s.RootNode.FileCount != 3 {
+		t.Errorf("expected root FileCount 3, got %d", s.RootNode.FileCount)
+	}
+	if s.RootNode.DirCount != 1 {
+		t.Errorf("expected root DirCount 1, got %d", s.RootNode.DirCount)
 	}
 }
 
@@ -109,7 +111,7 @@ func TestFlattenTree(t *testing.T) {
 
 	// Expand root
 	s.RootNode.Expanded = true
-	nodes := FlattenTree(s.RootNode, maxTreeDepth, true)
+	nodes := FlattenTree(s.RootNode, maxTreeDepth, true, sortBySize)
 
 	// Should have: root, a.txt, sub/, = 3
 	if len(nodes) < 3 {
@@ -122,7 +124,7 @@ func TestFlattenTree(t *testing.T) {
 			n.Node.Expanded = true
 		}
 	}
-	nodes2 := FlattenTree(s.RootNode, maxTreeDepth, true)
+	nodes2 := FlattenTree(s.RootNode, maxTreeDepth, true, sortBySize)
 	// root + a.txt + sub/ + sub/b.txt = 4
 	if len(nodes2) != 4 {
 		t.Errorf("expected 4 nodes after expand, got %d", len(nodes2))
@@ -263,8 +265,8 @@ func TestHiddenToggle(t *testing.T) {
 	<-s.Run()
 	s.RootNode.Expanded = true
 
-	hidden := FlattenTree(s.RootNode, maxTreeDepth, false)
-	shown := FlattenTree(s.RootNode, maxTreeDepth, true)
+	hidden := FlattenTree(s.RootNode, maxTreeDepth, false, sortBySize)
+	shown := FlattenTree(s.RootNode, maxTreeDepth, true, sortBySize)
 	if len(hidden) != 2 { // root + visible
 		t.Errorf("hidden-off: expected 2 nodes, got %d", len(hidden))
 	}

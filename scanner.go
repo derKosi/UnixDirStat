@@ -18,6 +18,13 @@ type FileNode struct {
 	Children  []*FileNode
 	Parent    *FileNode
 	Expanded  bool
+
+	// FileCount is the number of files (recursively) under this directory.
+	// For files, this is 1. Populated during computeDirSizes.
+	FileCount int64
+	// DirCount is the number of subdirectories (recursively).
+	// For files, this is 0. Populated during computeDirSizes.
+	DirCount int64
 }
 
 // ScanStats tracks scan progress.
@@ -34,12 +41,8 @@ type ScanStats struct {
 
 // ScanConfig configures scanner behaviour.
 type ScanConfig struct {
-	// FollowSymlinks recurses into symlinked directories. Cycle protection
-	// is enabled automatically. Default false (symlinks are recorded but
-	// not followed, which is safe and loop-free by construction).
 	FollowSymlinks bool
-	// MaxWorkers bounds concurrent directory reads. <=0 → 64.
-	MaxWorkers int
+	MaxWorkers     int
 }
 
 // DefaultScanConfig is applied when no config is supplied.
@@ -63,26 +66,20 @@ func resolveConfig(cfgs ...ScanConfig) ScanConfig {
 	return cfg
 }
 
-// jobsBuf is generously sized: the job channel only ever carries
-// directories (files are handled inline), so fan-in per directory is the
-// number of immediate sub-directories — modest in practice.
-const jobsBuf = 4096
-
-// Scanner walks a directory tree using a bounded worker pool, preventing
-// file-descriptor exhaustion and unbounded goroutine growth on huge trees.
+// Scanner walks a directory tree using a semaphore-bounded goroutine pool.
+// Each directory gets its own goroutine, bounded by a semaphore channel.
+// This avoids the deadlock that a shared job-channel causes when all workers
+// simultaneously need to enqueue children.
 type Scanner struct {
 	Root     string
 	RootNode *FileNode
 	Stats    ScanStats
 	cfg      ScanConfig
 
-	// cycle protection (follow-symlinks mode only): real paths already visited.
 	visited map[string]struct{}
 	visMu   sync.Mutex
 }
 
-// NewScanner creates a scanner. Variadic config keeps existing callers
-// (e.g. tests) working with sane defaults.
 func NewScanner(root string, cfgs ...ScanConfig) *Scanner {
 	cfg := resolveConfig(cfgs...)
 	abs, err := filepath.Abs(root)
@@ -113,43 +110,31 @@ func (s *Scanner) Run() <-chan struct{} {
 	return ch
 }
 
-// scan drives a fixed-size worker pool fed by a job channel. The closer
-// pattern (pending.Wait() → close(jobs)) guarantees all directories are
-// processed before the channel closes. pending.Add for children happens
-// before the corresponding Done for the parent, so the counter never
-// reaches zero prematurely.
+// scan uses a semaphore (buffered channel) to bound concurrent goroutines.
+// Each directory spawns its own goroutine; the semaphore limits how many
+// run concurrently. A WaitGroup tracks all outstanding directory goroutines.
+// Deadlock-free because a goroutine releases its semaphore slot AFTER fully
+// processing its directory (including enqueueing children).
 func (s *Scanner) scan() {
-	workers := s.cfg.MaxWorkers
-	jobs := make(chan *FileNode, jobsBuf)
-	var pending sync.WaitGroup // outstanding directory jobs
+	sem := make(chan struct{}, s.cfg.MaxWorkers)
+	var wg sync.WaitGroup
 
-	for i := 0; i < workers; i++ {
-		go s.worker(jobs, &pending)
-	}
-
-	// Seed root into the visited set so a symlink pointing back at the
-	// scan root is detected as a cycle when follow mode is on.
 	s.markVisited(s.Root)
 
-	pending.Add(1)
-	jobs <- s.RootNode
+	wg.Add(1)
+	sem <- struct{}{}
+	go s.scanDir(s.RootNode, sem, &wg)
 
-	pending.Wait()
-	close(jobs)
+	wg.Wait()
 }
 
-func (s *Scanner) worker(jobs chan *FileNode, pending *sync.WaitGroup) {
-	for node := range jobs {
-		s.processDir(node, jobs, pending)
-		pending.Done()
-	}
-}
+// scanDir reads one directory and recursively scans subdirectories.
+// The semaphore slot is released BEFORE spawning children to prevent
+// deadlock: if the parent held its slot while acquiring child slots,
+// all workers could block on sem <- struct{}{} with none releasing.
+func (s *Scanner) scanDir(node *FileNode, sem chan struct{}, wg *sync.WaitGroup) {
+	defer wg.Done()
 
-// processDir reads one directory's entries and appends child nodes. Each
-// child directory is counted and enqueued; files are counted inline.
-// A node is ever processed by exactly one worker, so node.Children needs
-// no external synchronisation.
-func (s *Scanner) processDir(node *FileNode, jobs chan<- *FileNode, pending *sync.WaitGroup) {
 	s.Stats.CurrentPath.Store(node.Path)
 
 	entries, err := os.ReadDir(node.Path)
@@ -158,23 +143,23 @@ func (s *Scanner) processDir(node *FileNode, jobs chan<- *FileNode, pending *syn
 		return
 	}
 
+	var subdirs []*FileNode
+
 	for _, entry := range entries {
 		name := entry.Name()
 		fullPath := filepath.Join(node.Path, name)
 		isLink := entry.Type()&os.ModeSymlink != 0
 
-		// Followed symlink: resolve to its target.
 		if isLink && s.cfg.FollowSymlinks {
 			fi, ferr := os.Stat(fullPath)
 			if ferr != nil {
-				// Broken or unreadable symlink: record as a link node + error.
 				s.recordError(fullPath, ferr)
 				s.addSymlinkNode(node, name, fullPath, entry)
 				continue
 			}
 			if fi.IsDir() {
 				if s.markVisited(fullPath) {
-					continue // cycle — skip
+					continue
 				}
 				child := &FileNode{
 					Name: name, Path: fullPath,
@@ -183,11 +168,9 @@ func (s *Scanner) processDir(node *FileNode, jobs chan<- *FileNode, pending *syn
 				node.Children = append(node.Children, child)
 				s.Stats.DirsScanned.Add(1)
 				s.Stats.SymlinksScanned.Add(1)
-				pending.Add(1)
-				jobs <- child
+				subdirs = append(subdirs, child)
 				continue
 			}
-			// symlink → file
 			child := &FileNode{
 				Name: name, Path: fullPath,
 				Size: fi.Size(), IsSymlink: true, Parent: node,
@@ -199,7 +182,6 @@ func (s *Scanner) processDir(node *FileNode, jobs chan<- *FileNode, pending *syn
 			continue
 		}
 
-		// Symlink, not followed: record the link itself (small) so it is visible.
 		if isLink {
 			s.addSymlinkNode(node, name, fullPath, entry)
 			continue
@@ -212,12 +194,10 @@ func (s *Scanner) processDir(node *FileNode, jobs chan<- *FileNode, pending *syn
 			}
 			node.Children = append(node.Children, child)
 			s.Stats.DirsScanned.Add(1)
-			pending.Add(1)
-			jobs <- child
+			subdirs = append(subdirs, child)
 			continue
 		}
 
-		// Regular (or other non-dir, non-link) file.
 		size := int64(0)
 		if info, ierr := entry.Info(); ierr == nil {
 			size = info.Size()
@@ -227,11 +207,20 @@ func (s *Scanner) processDir(node *FileNode, jobs chan<- *FileNode, pending *syn
 		s.Stats.FilesScanned.Add(1)
 		s.Stats.TotalSize.Add(size)
 	}
+
+	// Release semaphore BEFORE spawning children. This is critical:
+	// the parent no longer needs its slot (its directory is fully read),
+	// and releasing first means children can acquire slots even if the
+	// pool is full.
+	<-sem
+
+	for _, child := range subdirs {
+		wg.Add(1)
+		sem <- struct{}{} // acquire slot for child
+		go s.scanDir(child, sem, wg)
+	}
 }
 
-// addSymlinkNode appends a not-followed symlink node, counting it and its
-// (link) size. The link's own size is tiny; it is shown mainly so the
-// entry is visible and deletable from the UI.
 func (s *Scanner) addSymlinkNode(node *FileNode, name, fullPath string, entry os.DirEntry) {
 	size := int64(0)
 	if info, err := entry.Info(); err == nil {
@@ -246,8 +235,6 @@ func (s *Scanner) addSymlinkNode(node *FileNode, name, fullPath string, entry os
 	s.Stats.TotalSize.Add(size)
 }
 
-// markVisited records a resolved path and reports whether it was already
-// seen (true == cycle). Used only in follow-symlink mode.
 func (s *Scanner) markVisited(path string) bool {
 	resolved, err := filepath.EvalSymlinks(path)
 	if err != nil {
@@ -267,15 +254,27 @@ func (s *Scanner) recordError(path string, err error) {
 	s.Stats.LastError.Store(fmt.Sprintf("%s: %v", path, err))
 }
 
-// computeDirSizes calculates directory sizes from children (post-order).
-func (s *Scanner) computeDirSizes(node *FileNode) int64 {
+// computeDirSizes calculates directory sizes and file/dir counts (post-order).
+// Each directory node counts itself in DirCount, so a dir with 3 subdirs
+// has DirCount=3 (subdirs) — the node's own existence is implicit (it's a dir).
+func (s *Scanner) computeDirSizes(node *FileNode) (int64, int64, int64) {
 	if !node.IsDir {
-		return node.Size
+		return node.Size, 1, 0
 	}
-	var total int64
+	var totalSize, fileCount, dirCount int64
 	for _, child := range node.Children {
-		total += s.computeDirSizes(child)
+		cs, fc, dc := s.computeDirSizes(child)
+		totalSize += cs
+		fileCount += fc
+		// Count this child as a directory if it is one.
+		if child.IsDir {
+			dirCount += dc + 1
+		} else {
+			dirCount += dc
+		}
 	}
-	node.Size = total
-	return total
+	node.Size = totalSize
+	node.FileCount = fileCount
+	node.DirCount = dirCount
+	return totalSize, fileCount, dirCount
 }

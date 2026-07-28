@@ -13,8 +13,8 @@ type Panel int
 
 const (
 	TreePanel Panel = iota
-	TreemapPanel
 	ExtPanel
+	TreemapPanel
 )
 
 // FocusState tracks which panel is active.
@@ -34,7 +34,7 @@ type ViewDims struct {
 
 // ── Header / Footer ───────────────────────────────────────────────
 
-func RenderHeader(path string, stats *ScanStats, width int) string {
+func RenderHeader(path string, stats *ScanStats, width int, sortMode string) string {
 	done := stats.Done.Load()
 	files := stats.FilesScanned.Load()
 	dirs := stats.DirsScanned.Load()
@@ -42,13 +42,17 @@ func RenderHeader(path string, stats *ScanStats, width int) string {
 	size := stats.TotalSize.Load()
 	errs := stats.Errors.Load()
 
+	// Breadcrumb-style path: shorten to ~/rest if under /home
+	bc := BreadcrumbPath(path)
+
 	var text string
 	if done {
 		text = fmt.Sprintf(" UnixDirStat  %s  %d files, %d dirs", FormatSize(size), files, dirs)
 		if links > 0 {
 			text += fmt.Sprintf(", %d links", links)
 		}
-		text += "  " + path
+		text += "  sort:" + sortMode
+		text += "  " + bc
 		if errs > 0 {
 			text += fmt.Sprintf("  \u26a0 %d errors", errs)
 		}
@@ -79,8 +83,21 @@ func RenderHeader(path string, stats *ScanStats, width int) string {
 		Render(string(runeText))
 }
 
+// BreadcrumbPath shortens a path to ~/rest if under /home/user.
+func BreadcrumbPath(path string) string {
+	home := "/home/"
+	if strings.HasPrefix(path, home) {
+		rest := path[len(home):]
+		if slashIdx := strings.Index(rest, "/"); slashIdx >= 0 {
+			return "~" + rest[slashIdx:]
+		}
+		return "~/" + rest
+	}
+	return path
+}
+
 func RenderFooter(width int) string {
-	keys := " q:quit  Tab:panel  \u2191\u2193:nav  Enter:expand  d:del  .:hidden  r:rescan  /:path "
+	keys := " q:quit  Tab:panel  jk:nav  Enter:expand  d:del  .:hidden  r:rescan  s:sort  u:parent  /:path "
 	runeKeys := []rune(keys)
 	if len(runeKeys) > width {
 		runeKeys = runeKeys[:width]
@@ -130,7 +147,7 @@ func RenderTree(nodes []*TreeNode, totalSize int64, cursor int, focused bool, wi
 		}
 
 		// Name with color
-		name := tn.Node.Name
+		name := SanitizeName(tn.Node.Name)
 		var nameStyle lipgloss.Style
 		switch {
 		case tn.Node.IsDir:
@@ -165,10 +182,18 @@ func RenderTree(nodes []*TreeNode, totalSize int64, cursor int, focused bool, wi
 		barStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(barColor))
 		bar := barStyle.Render(strings.Repeat("█", barLen)) + strings.Repeat("░", 10-barLen)
 
+		// Count info for directories
+		countStr := ""
+		if tn.Node.IsDir {
+			countStr = fmt.Sprintf("%df %dd", tn.Node.FileCount, tn.Node.DirCount)
+		}
+
 		pct := FormatPct(tn.Node.Size, totalSize)
 		sizeStr := FormatSize(tn.Node.Size)
-
 		rightPart := fmt.Sprintf("%8s %5s %s", sizeStr, pct, bar)
+		if countStr != "" {
+			rightPart = fmt.Sprintf("%8s %5s %-10s %s", sizeStr, pct, countStr, bar)
+		}
 		leftPart := fmt.Sprintf("%s%s%s", prefix, connector, expand)
 
 		avail := width - runeWidth(leftPart) - runeWidth(rightPart) - 3
@@ -289,19 +314,26 @@ func RenderTreemap(items []TreemapItem, focused bool, width, height int) string 
 
 		bg := lipgloss.Color(item.Color)
 		bgStyle := lipgloss.NewStyle().Background(bg)
-		dimStyle := lipgloss.NewStyle().Background(bg).Foreground(lipgloss.Color(darken(item.Color, 0.3)))
 
-		// Fill the rectangle with background color blocks
-		for y := item.Rect.Y; y < item.Rect.Y+item.Rect.H && y < height; y++ {
-			for x := item.Rect.X; x < item.Rect.X+item.Rect.W && x < width; x++ {
-				if x < 0 || y < 0 {
+		// Fill the rectangle with solid background color.
+		// One lipgloss.Render per row instead of per cell.
+		endX := item.Rect.X + item.Rect.W
+		if endX > width {
+			endX = width
+		}
+		fillWidth := endX - item.Rect.X
+		if fillWidth > 0 {
+			fillStr := bgStyle.Render(strings.Repeat(" ", fillWidth))
+			fillRunes := []rune(fillStr)
+			for y := item.Rect.Y; y < item.Rect.Y+item.Rect.H && y < height; y++ {
+				if y < 0 {
 					continue
 				}
-				// Use two different block chars for texture
-				if (x+y)%2 == 0 {
-					grid[y][x] = bgStyle.Render(" ")
-				} else {
-					grid[y][x] = dimStyle.Render(" ")
+				for i, r := range fillRunes {
+					px := item.Rect.X + i
+					if px >= 0 && px < width {
+						grid[y][px] = string(r)
+					}
 				}
 			}
 		}

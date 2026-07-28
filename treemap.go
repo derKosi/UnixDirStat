@@ -1,6 +1,9 @@
 package main
 
-import "hash/fnv"
+import (
+	"hash/fnv"
+	"sort"
+)
 
 // Rect represents a rectangle in the treemap.
 type Rect struct {
@@ -186,9 +189,8 @@ func worstAspect(row []TreemapItem, shortSide int, totalSize int64, totalArea in
 	return worst
 }
 
-// BuildTreemapItems flattens the tree into treemap items.
-// If node is a directory with children, shows its children.
-// Each item gets a vibrant color — directories included.
+// BuildTreemapItems flattens the tree into treemap items, sorted by size
+// descending (required by the squarified treemap algorithm).
 func BuildTreemapItems(node *FileNode) []TreemapItem {
 	if node == nil {
 		return nil
@@ -206,7 +208,6 @@ func BuildTreemapItems(node *FileNode) []TreemapItem {
 			}
 			color = ExtColor(ext)
 		} else {
-			// Directories get a vibrant color based on their name hash
 			color = dirColor(child.Name)
 		}
 		items = append(items, TreemapItem{
@@ -215,6 +216,10 @@ func BuildTreemapItems(node *FileNode) []TreemapItem {
 			Color: color,
 		})
 	}
+	// Sort by size descending — Squarify requires this.
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].Size > items[j].Size
+	})
 	return items
 }
 

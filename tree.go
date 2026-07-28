@@ -17,15 +17,15 @@ type TreeNode struct {
 }
 
 // FlattenTree returns visible nodes for the tree view, respecting Expanded
-// state. When showHidden is false, dotfiles (and their subtrees) are hidden.
-// The root is always included.
-func FlattenTree(root *FileNode, maxDepth int, showHidden bool) []*TreeNode {
+// state. When showHidden is false, dotfiles are hidden.
+// sortMode controls child ordering: size, name, or count.
+func FlattenTree(root *FileNode, maxDepth int, showHidden bool, mode sortMode) []*TreeNode {
 	var result []*TreeNode
-	flattenRecursive(root, "", true, 0, maxDepth, showHidden, &result)
+	flattenRecursive(root, "", true, 0, maxDepth, showHidden, mode, &result)
 	return result
 }
 
-func flattenRecursive(node *FileNode, prefix string, isLast bool, depth, maxDepth int, showHidden bool, result *[]*TreeNode) {
+func flattenRecursive(node *FileNode, prefix string, isLast bool, depth, maxDepth int, showHidden bool, mode sortMode, result *[]*TreeNode) {
 	if node == nil || depth > maxDepth {
 		return
 	}
@@ -39,14 +39,20 @@ func flattenRecursive(node *FileNode, prefix string, isLast bool, depth, maxDept
 	*result = append(*result, tn)
 
 	if node.IsDir && node.Expanded && depth < maxDepth {
-		// Sort children: directories first, then by size descending.
 		children := make([]*FileNode, len(node.Children))
 		copy(children, node.Children)
 		sort.Slice(children, func(i, j int) bool {
 			if children[i].IsDir != children[j].IsDir {
 				return children[i].IsDir
 			}
-			return children[i].Size > children[j].Size
+			switch mode {
+			case sortByName:
+				return children[i].Name < children[j].Name
+			case sortByCount:
+				return children[i].FileCount+children[i].DirCount > children[j].FileCount+children[j].DirCount
+			default:
+				return children[i].Size > children[j].Size
+			}
 		})
 
 		for i, child := range children {
@@ -62,7 +68,7 @@ func flattenRecursive(node *FileNode, prefix string, isLast bool, depth, maxDept
 				}
 			}
 			childIsLast := i == len(children)-1
-			flattenRecursive(child, childPrefix, childIsLast, depth+1, maxDepth, showHidden, result)
+			flattenRecursive(child, childPrefix, childIsLast, depth+1, maxDepth, showHidden, mode, result)
 		}
 	}
 }

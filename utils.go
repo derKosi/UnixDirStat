@@ -92,3 +92,24 @@ func FormatPct(part, total int64) string {
 func IsHidden(name string) bool {
 	return strings.HasPrefix(name, ".")
 }
+
+// SanitizeName replaces control characters (newlines, tabs, etc.) in
+// filenames with a literal escape sequence to prevent TUI layout corruption.
+func SanitizeName(name string) string {
+	var sb strings.Builder
+	for _, r := range name {
+		switch {
+		case r == '\n':
+			sb.WriteString("\\n")
+		case r == '\r':
+			sb.WriteString("\\r")
+		case r == '	':
+		sb.WriteString("\\t")
+		case r < 0x20:
+			sb.WriteString("?")
+		default:
+			sb.WriteRune(r)
+		}
+	}
+	return sb.String()
+}

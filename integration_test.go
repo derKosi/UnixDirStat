@@ -87,7 +87,7 @@ func TestLargeDir(t *testing.T) {
 
 	// Test tree expansion
 	s.RootNode.Expanded = true
-	nodes := FlattenTree(s.RootNode, maxTreeDepth, true)
+	nodes := FlattenTree(s.RootNode, maxTreeDepth, true, sortBySize)
 	fmt.Printf("  Tree has %d visible nodes (expanded root)\n", len(nodes))
 
 	// Expand src/
@@ -96,7 +96,7 @@ func TestLargeDir(t *testing.T) {
 			n.Node.Expanded = true
 		}
 	}
-	nodes2 := FlattenTree(s.RootNode, maxTreeDepth, true)
+	nodes2 := FlattenTree(s.RootNode, maxTreeDepth, true, sortBySize)
 	fmt.Printf("  Tree has %d visible nodes (expanded src)\n", len(nodes2))
 	if len(nodes2) <= len(nodes) {
 		t.Error("expanding src should show more nodes")

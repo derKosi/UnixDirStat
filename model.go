@@ -27,6 +27,15 @@ const (
 	modalMessage
 )
 
+// sortMode controls how tree children are sorted.
+type sortMode int
+
+const (
+	sortBySize sortMode = iota
+	sortByName
+	sortByCount
+)
+
 // Model is the BubbleTea model for UnixDirStat.
 type Model struct {
 	scanner    *Scanner
@@ -41,6 +50,7 @@ type Model struct {
 	showHidden bool
 	ready      bool
 	viewDims   ViewDims
+	sortMode   sortMode
 
 	lastRebuild time.Time
 
@@ -146,6 +156,15 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "d", "D":
 		return m.startDelete(), nil
 
+	case "s":
+		// Cycle sort mode: size -> name -> count -> size
+		m.sortMode = (m.sortMode + 1) % 3
+		m.rebuildViews()
+
+	case "u":
+		// Navigate to parent directory in the tree (jump cursor to parent)
+		m.jumpToParent()
+
 	case "up", "k":
 		m.moveCursor(-1)
 
@@ -244,12 +263,15 @@ func (m *Model) startDelete() tea.Model {
 }
 
 // rescan re-creates the scanner with the current path+config and clears
-// all derived view state.
+// all derived view state. Cursor positions are reset to 0 so they don't
+// point at stale indices after the tree changes.
 func (m *Model) rescan() tea.Cmd {
 	m.scanner = NewScanner(m.path, m.cfg)
 	m.exts = nil
 	m.treemap = nil
 	m.flatTree = nil
+	m.focus.TreeCursor = 0
+	m.focus.ExtCursor = 0
 	ch := m.scanner.Run()
 	return tea.Batch(
 		func() tea.Msg { <-ch; return scanUpdateMsg{} },
@@ -296,6 +318,46 @@ func (m *Model) handleEnter() {
 	}
 }
 
+// jumpToParent moves the cursor to the parent directory of the
+// currently selected node, collapsing the current dir if expanded.
+func (m *Model) jumpToParent() {
+	if m.focus.ActivePanel != TreePanel || len(m.flatTree) == 0 {
+		return
+	}
+	if m.focus.TreeCursor < 0 || m.focus.TreeCursor >= len(m.flatTree) {
+		return
+	}
+	current := m.flatTree[m.focus.TreeCursor].Node
+	if current.Parent == nil {
+		return
+	}
+	// Collapse current dir if it's a dir, then jump to parent
+	if current.IsDir && current.Expanded {
+		current.Expanded = false
+		m.rebuildViews()
+	}
+	// Find parent in the new flatTree
+	for i, tn := range m.flatTree {
+		if tn.Node == current.Parent {
+			m.focus.TreeCursor = i
+			m.rebuildTreemapForSelection()
+			return
+		}
+	}
+}
+
+// sortLabel returns a human-readable label for the current sort mode.
+func (m *Model) sortLabel() string {
+	switch m.sortMode {
+	case sortByName:
+		return "name"
+	case sortByCount:
+		return "count"
+	default:
+		return "size"
+	}
+}
+
 // rebuildTreemapForSelection rebuilds the treemap to show the contents
 // of the currently selected directory in the tree.
 func (m *Model) rebuildTreemapForSelection() {
@@ -326,6 +388,13 @@ func (m *Model) rebuildTreemapForSelection() {
 
 func (m *Model) recalcLayout() {
 	w, h := m.viewDims.Width, m.viewDims.Height
+	// Minimum terminal size; below this we just render what we can.
+	m.viewDims.TreeW = minInt(w-2, 40)
+	m.viewDims.TreeH = minInt(h-4, 5)
+	m.viewDims.ExtW = minInt(w-2, 20)
+	m.viewDims.ExtH = minInt(h-4, 5)
+	m.viewDims.TreemapW = w
+	m.viewDims.TreemapH = minInt(h-4, 5)
 	if w < 40 || h < 15 {
 		return
 	}
@@ -336,7 +405,6 @@ func (m *Model) recalcLayout() {
 
 	usableH := h - 2 // header + footer
 	topH := usableH * 2 / 5
-	// bottomH := usableH - topH
 
 	// Width: tree 60%, extensions 40%
 	treeW := w * 3 / 5
@@ -360,7 +428,7 @@ func (m *Model) rebuildViews() {
 		m.scanner.RootNode.Expanded = true
 	}
 
-	m.flatTree = FlattenTree(m.scanner.RootNode, maxTreeDepth, m.showHidden)
+	m.flatTree = FlattenTree(m.scanner.RootNode, maxTreeDepth, m.showHidden, m.sortMode)
 	m.exts = GroupByExtension(m.scanner.RootNode, m.showHidden)
 
 	if nodes := m.flatTree; nodes != nil {
@@ -410,7 +478,7 @@ func (m Model) renderMain() string {
 		}
 	}
 
-	sb.WriteString(RenderHeader(m.path, stats, w))
+	sb.WriteString(RenderHeader(m.path, stats, w, m.sortLabel()))
 	sb.WriteString("\n")
 
 	treeFocused := m.focus.ActivePanel == TreePanel
@@ -443,7 +511,7 @@ func (m Model) renderInputScreen() string {
 	if m.scanner != nil {
 		stats = &m.scanner.Stats
 	}
-	sb.WriteString(RenderHeader(m.path, stats, w))
+	sb.WriteString(RenderHeader(m.path, stats, w, m.sortLabel()))
 	sb.WriteString("\n\n\n")
 	prompt := lipgloss.NewStyle().Foreground(lipgloss.Color("#7aa2f7")).Bold(true).Render("  Scan path:")
 	sb.WriteString(prompt + "\n\n  " + m.input.View())
@@ -464,7 +532,7 @@ func (m Model) renderModalScreen() string {
 	if m.scanner != nil {
 		stats = &m.scanner.Stats
 	}
-	sb.WriteString(RenderHeader(m.path, stats, w))
+	sb.WriteString(RenderHeader(m.path, stats, w, m.sortLabel()))
 	sb.WriteString("\n")
 
 	var title, body, hint string
