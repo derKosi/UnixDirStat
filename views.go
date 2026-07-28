@@ -196,7 +196,7 @@ func RenderTree(nodes []*TreeNode, totalSize int64, cursor int, focused bool, wi
 		}
 		leftPart := fmt.Sprintf("%s%s%s", prefix, connector, expand)
 
-		avail := width - runeWidth(leftPart) - runeWidth(rightPart) - 3
+		avail := width - lipgloss.Width(leftPart) - lipgloss.Width(rightPart) - 3
 		if avail < 4 {
 			avail = 4
 		}
@@ -403,46 +403,12 @@ func box(content string, width, height int, focused bool) string {
 		Render(content)
 }
 
-// runeWidth returns the display width of a string (ignoring ANSI escapes roughly).
-func runeWidth(s string) int {
-	// Strip ANSI escape sequences for measurement
-	n := 0
-	inEscape := false
-	for _, r := range s {
-		if r == '\x1b' {
-			inEscape = true
-			continue
-		}
-		if inEscape {
-			if r == 'm' {
-				inEscape = false
-			}
-			continue
-		}
-		n++
-	}
-	return n
-}
-
 // padRight pads a string with spaces to target display width.
+// Uses lipgloss.Width for correct ANSI-aware measurement.
 func padRight(s string, targetWidth int) string {
-	currentWidth := runeWidth(s)
+	currentWidth := lipgloss.Width(s)
 	if currentWidth >= targetWidth {
 		return s
 	}
 	return s + strings.Repeat(" ", targetWidth-currentWidth)
-}
-
-// darken reduces a hex color's brightness by a factor (0-1).
-func darken(hex string, factor float64) string {
-	hex = strings.TrimPrefix(hex, "#")
-	if len(hex) != 6 {
-		return "#000000"
-	}
-	var r, g, b int
-	fmt.Sscanf(hex, "%02x%02x%02x", &r, &g, &b)
-	r = int(float64(r) * (1 - factor))
-	g = int(float64(g) * (1 - factor))
-	b = int(float64(b) * (1 - factor))
-	return fmt.Sprintf("#%02x%02x%02x", r, g, b)
 }

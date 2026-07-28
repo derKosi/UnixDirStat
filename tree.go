@@ -112,7 +112,11 @@ func ShortenPath(path string, maxLen int) string {
 			}
 		}
 	}
-	// Truncate middle
-	half := maxLen / 2
+	// Truncate middle: "…" is 3 bytes (E2 80 A6), so result = half + 3 + half.
+	// half + 3 + half <= maxLen  →  half <= (maxLen - 3) / 2
+	half := (maxLen - 3) / 2
+	if half < 1 {
+		half = 1
+	}
 	return path[:half] + "…" + path[len(path)-half:]
 }

@@ -389,12 +389,12 @@ func (m *Model) rebuildTreemapForSelection() {
 func (m *Model) recalcLayout() {
 	w, h := m.viewDims.Width, m.viewDims.Height
 	// Minimum terminal size; below this we just render what we can.
-	m.viewDims.TreeW = minInt(w-2, 40)
-	m.viewDims.TreeH = minInt(h-4, 5)
-	m.viewDims.ExtW = minInt(w-2, 20)
-	m.viewDims.ExtH = minInt(h-4, 5)
+	m.viewDims.TreeW = min(w-2, 40)
+	m.viewDims.TreeH = min(h-4, 5)
+	m.viewDims.ExtW = min(w-2, 20)
+	m.viewDims.ExtH = min(h-4, 5)
 	m.viewDims.TreemapW = w
-	m.viewDims.TreemapH = minInt(h-4, 5)
+	m.viewDims.TreemapH = min(h-4, 5)
 	if w < 40 || h < 15 {
 		return
 	}
@@ -567,7 +567,7 @@ func (m Model) renderModalScreen() string {
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("#f7768e")).
 		Padding(1, 2).
-		Width(minInt(w-6, 72))
+		Width(min(w-6, 72))
 
 	modalContent := titleStyle.Render(title) + "\n\n" +
 		lipgloss.NewStyle().Foreground(lipgloss.Color("#c0caf5")).Render(body) + "\n\n" +
@@ -584,12 +584,4 @@ func (m Model) renderModalScreen() string {
 	sb.WriteString("\n")
 	sb.WriteString(RenderFooter(w))
 	return sb.String()
-}
-
-// minInt is a tiny helper (kept explicit for clarity alongside ints).
-func minInt(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

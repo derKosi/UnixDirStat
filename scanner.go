@@ -235,6 +235,10 @@ func (s *Scanner) addSymlinkNode(node *FileNode, name, fullPath string, entry os
 	s.Stats.TotalSize.Add(size)
 }
 
+// markVisited records a path as visited and reports whether it was seen before.
+// Used for symlink cycle detection in follow mode. The path is resolved to
+// its canonical form via EvalSymlinks so that two symlinks pointing at the
+// same target are detected as a cycle.
 func (s *Scanner) markVisited(path string) bool {
 	resolved, err := filepath.EvalSymlinks(path)
 	if err != nil {
