@@ -6,10 +6,12 @@ the terminal.
 
 ## Features
 
+- WinDirStat-style layout: tree + extension list on top, treemap full width below
 - Concurrent scanner (semaphore-bounded goroutine pool, no deadlock on large trees)
 - Squarified treemap with live updates during scan
 - File extension breakdown with colored bars
 - Interactive tree view with expand/collapse
+- Arrow-key navigation (left/right collapse/expand + descend, like Explorer)
 - Delete files/dirs from within the TUI (with confirmation)
 - Three sort modes: size, name, file count
 - Dotfile visibility toggle
@@ -40,19 +42,21 @@ go build -o unixdirstat .
 
 ## Keybindings
 
-| Key     | Action                              |
-|---------|-------------------------------------|
-| q       | Quit                                |
-| Tab     | Cycle panels (Tree -> Ext -> Treemap)|
-| j / Down | Move cursor down                   |
-| k / Up  | Move cursor up                      |
-| Enter   | Expand/collapse directory           |
-| d       | Delete file/dir (with confirmation) |
-| .       | Toggle hidden files                 |
-| r       | Rescan                              |
-| s       | Cycle sort mode (size/name/count)   |
-| u       | Jump to parent directory            |
-| /       | Change scan path                    |
+| Key      | Action                              |
+|----------|-------------------------------------|
+| q        | Quit                                |
+| Tab      | Cycle panels (Tree -> Ext -> Treemap)|
+| ← / h    | Collapse dir / jump to parent       |
+| → / l    | Expand dir / descend into first child|
+| ↑ / k    | Move cursor up                      |
+| ↓ / j    | Move cursor down                    |
+| Enter    | Expand/collapse directory           |
+| d        | Delete file/dir (with confirmation) |
+| .        | Toggle hidden files                 |
+| r        | Rescan                              |
+| s        | Cycle sort mode (size/name/count)   |
+| u        | Jump to parent directory            |
+| /        | Change scan path                    |
 
 ## Architecture
 

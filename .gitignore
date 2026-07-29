@@ -1,6 +1,22 @@
+# Binaries
 /unixdirstat
 /UnixDirStat
+*.exe
+
+# Test / coverage artifacts
 *.test
 *.out
 coverage.*
+profile.out
+
+# Editor / OS files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+
+# Hermes agent temp files
 .hermes-tmp*

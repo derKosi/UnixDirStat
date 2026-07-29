@@ -171,6 +171,12 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "down", "j":
 		m.moveCursor(1)
 
+	case "left", "h":
+		m.handleLeft()
+
+	case "right", "l":
+		m.handleRight()
+
 	case "enter", " ":
 		m.handleEnter()
 	}
@@ -346,6 +352,59 @@ func (m *Model) jumpToParent() {
 	}
 }
 
+// handleLeft collapses a directory or jumps to its parent.
+// Explorer/WinDirStat semantics:
+//   - On an expanded dir → collapse it
+//   - On a collapsed dir or a file → jump to parent dir
+func (m *Model) handleLeft() {
+	if m.focus.ActivePanel != TreePanel || len(m.flatTree) == 0 {
+		return
+	}
+	if m.focus.TreeCursor < 0 || m.focus.TreeCursor >= len(m.flatTree) {
+		return
+	}
+	current := m.flatTree[m.focus.TreeCursor].Node
+	if current.IsDir && current.Expanded {
+		current.Expanded = false
+		m.rebuildViews()
+		return
+	}
+	// Collapsed dir or file → jump to parent
+	m.jumpToParent()
+}
+
+// handleRight expands a directory or descends into it.
+// Explorer/WinDirStat semantics:
+//   - On a collapsed dir → expand it
+//   - On an already-expanded dir → move cursor to first child
+//   - On a file → no-op
+func (m *Model) handleRight() {
+	if m.focus.ActivePanel != TreePanel || m.scanner == nil || m.scanner.RootNode == nil {
+		return
+	}
+	nodes := m.flatTree
+	if m.focus.TreeCursor < 0 || m.focus.TreeCursor >= len(nodes) {
+		return
+	}
+	current := nodes[m.focus.TreeCursor].Node
+	if !current.IsDir {
+		return
+	}
+	if !current.Expanded {
+		current.Expanded = true
+		m.rebuildViews()
+		return
+	}
+	// Already expanded → move cursor to first child (next entry in flatTree)
+	if m.focus.TreeCursor+1 < len(nodes) {
+		next := nodes[m.focus.TreeCursor+1].Node
+		if next.Parent == current {
+			m.focus.TreeCursor++
+			m.rebuildTreemapForSelection()
+		}
+	}
+}
+
 // sortLabel returns a human-readable label for the current sort mode.
 func (m *Model) sortLabel() string {
 	switch m.sortMode {
@@ -377,7 +436,7 @@ func (m *Model) rebuildTreemapForSelection() {
 		target = selected.Parent
 	}
 
-	tw := m.viewDims.TreemapW - 4 // account for borders
+	tw := m.viewDims.TreemapW - 2 // total width minus borders
 	th := m.viewDims.TreemapH - 2
 	if tw < 10 || th < 5 {
 		return
@@ -409,23 +468,31 @@ func (m *Model) recalcLayout() {
 		return
 	}
 
-	// Layout: header(1) + topPanels + treemap + footer(1) = h
-	// topPanels = 40% of usable, treemap = 60%
-	borderOverhead := 2 // top+bottom border lines per panel
+	// WinDirStat layout:
+	//   ┌──────────┬────────┐
+	//   │  Tree    │  Ext   │   ← top row (40% height)
+	//   ├──────────┴────────┤
+	//   │     Treemap       │   ← bottom (60% height, full width)
+	//   └───────────────────┘
+	// Dims below are TOTAL panel sizes (including borders).
+	// Render functions subtract 2 internally for border overhead.
 
 	usableH := h - 2 // header + footer
-	topH := usableH * 2 / 5
 
-	// Width: tree 60%, extensions 40%
+	// Height split: top row 40%, treemap 60%
+	topH := usableH * 2 / 5
+	tmH := usableH - topH
+
+	// Width split for top row: tree 60%, extensions 40%
 	treeW := w * 3 / 5
 	extW := w - treeW
 
 	m.viewDims.TreeW = treeW
-	m.viewDims.TreeH = max(topH-borderOverhead, 0)
+	m.viewDims.TreeH = topH
 	m.viewDims.ExtW = extW
-	m.viewDims.ExtH = max(topH-borderOverhead, 0)
+	m.viewDims.ExtH = topH
 	m.viewDims.TreemapW = w
-	m.viewDims.TreemapH = max(usableH-topH-borderOverhead, 0)
+	m.viewDims.TreemapH = tmH
 }
 
 // rebuildViews recomputes all derived view state: the flat (visible) tree,
@@ -499,13 +566,14 @@ func (m Model) renderMain() string {
 	extView := RenderExtensions(m.exts, m.focus.ExtCursor, extFocused,
 		rootSize, m.viewDims.ExtW, m.viewDims.ExtH)
 
-	topRow := lipgloss.JoinHorizontal(lipgloss.Top, treeView, extView)
-	sb.WriteString(topRow)
-	sb.WriteString("\n")
-
 	treemapFocused := m.focus.ActivePanel == TreemapPanel
 	treemapView := RenderTreemap(m.treemap, treemapFocused,
 		m.viewDims.TreemapW, m.viewDims.TreemapH)
+
+	// WinDirStat layout: Tree+Ext side by side on top, Treemap full width below
+	topRow := lipgloss.JoinHorizontal(lipgloss.Top, treeView, extView)
+	sb.WriteString(topRow)
+	sb.WriteString("\n")
 	sb.WriteString(treemapView)
 	sb.WriteString("\n")
 

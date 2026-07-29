@@ -97,7 +97,7 @@ func BreadcrumbPath(path string) string {
 }
 
 func RenderFooter(width int) string {
-	keys := " q:quit  Tab:panel  jk:nav  Enter:expand  d:del  .:hidden  r:rescan  s:sort  u:parent  /:path "
+	keys := " q:quit  Tab:panel  ←→:expand/nav  ↑↓:nav  Enter:toggle  d:del  .:hidden  r:rescan  s:sort  u:parent  /:path "
 	runeKeys := []rune(keys)
 	if len(runeKeys) > width {
 		runeKeys = runeKeys[:width]
@@ -114,15 +114,19 @@ func RenderFooter(width int) string {
 // ── Tree Panel ────────────────────────────────────────────────────
 
 func RenderTree(nodes []*TreeNode, totalSize int64, cursor int, focused bool, width, height int) string {
-	if height <= 0 || width <= 0 {
+	if height < 3 || width < 3 {
 		return ""
 	}
 	if len(nodes) == 0 {
 		return box(" No data yet…", width, height, focused)
 	}
 
+	// Inner dimensions (excluding border)
+	innerW := width - 2
+	innerH := height - 2
+
 	// Scroll window
-	maxVisible := height
+	maxVisible := innerH
 	start := 0
 	if cursor >= maxVisible {
 		start = cursor - maxVisible + 5
@@ -135,7 +139,7 @@ func RenderTree(nodes []*TreeNode, totalSize int64, cursor int, focused bool, wi
 		end = len(nodes)
 	}
 
-	lines := make([]string, 0, height)
+	lines := make([]string, 0, innerH)
 	for i := start; i < end; i++ {
 		tn := nodes[i]
 		isCursor := i == cursor
@@ -199,7 +203,7 @@ func RenderTree(nodes []*TreeNode, totalSize int64, cursor int, focused bool, wi
 		}
 		leftPart := fmt.Sprintf("%s%s%s", prefix, connector, expand)
 
-		avail := width - lipgloss.Width(leftPart) - lipgloss.Width(rightPart) - 3
+		avail := innerW - lipgloss.Width(leftPart) - lipgloss.Width(rightPart) - 3
 		if avail < 4 {
 			avail = 4
 		}
@@ -216,15 +220,15 @@ func RenderTree(nodes []*TreeNode, totalSize int64, cursor int, focused bool, wi
 			line = lipgloss.NewStyle().
 				Background(lipgloss.Color("#283457")).
 				Foreground(lipgloss.Color("#c0caf5")).
-				Width(width).
+				Width(innerW).
 				Render(line)
 		}
 		lines = append(lines, line)
 	}
 
 	// Pad
-	for len(lines) < height {
-		lines = append(lines, strings.Repeat(" ", width))
+	for len(lines) < innerH {
+		lines = append(lines, strings.Repeat(" ", innerW))
 	}
 
 	return box(strings.Join(lines, "\n"), width, height, focused)
@@ -233,26 +237,29 @@ func RenderTree(nodes []*TreeNode, totalSize int64, cursor int, focused bool, wi
 // ── Extension Panel ───────────────────────────────────────────────
 
 func RenderExtensions(exts []*ExtGroup, cursor int, focused bool, totalSize int64, width, height int) string {
-	if height <= 0 || width <= 0 {
+	if height < 3 || width < 3 {
 		return ""
 	}
 	if len(exts) == 0 {
 		return box(" No data yet…", width, height, focused)
 	}
 
+	innerH := height - 2
+	innerW := width - 2
+
 	start := 0
-	if cursor >= height {
-		start = cursor - height + 5
+	if cursor >= innerH {
+		start = cursor - innerH + 5
 		if start < 0 {
 			start = 0
 		}
 	}
-	end := start + height
+	end := start + innerH
 	if end > len(exts) {
 		end = len(exts)
 	}
 
-	lines := make([]string, 0, height)
+	lines := make([]string, 0, innerH)
 	for i := start; i < end; i++ {
 		ext := exts[i]
 		isCursor := i == cursor
@@ -280,14 +287,14 @@ func RenderExtensions(exts []*ExtGroup, cursor int, focused bool, totalSize int6
 			line = lipgloss.NewStyle().
 				Background(lipgloss.Color("#283457")).
 				Foreground(lipgloss.Color("#c0caf5")).
-				Width(width).
+				Width(innerW).
 				Render(line)
 		}
 		lines = append(lines, line)
 	}
 
-	for len(lines) < height {
-		lines = append(lines, strings.Repeat(" ", width))
+	for len(lines) < innerH {
+		lines = append(lines, strings.Repeat(" ", innerW))
 	}
 
 	return box(strings.Join(lines, "\n"), width, height, focused)
@@ -296,17 +303,21 @@ func RenderExtensions(exts []*ExtGroup, cursor int, focused bool, totalSize int6
 // ── Treemap Panel ─────────────────────────────────────────────────
 
 func RenderTreemap(items []TreemapItem, focused bool, width, height int) string {
-	if height <= 0 || width <= 0 {
+	if height < 3 || width < 3 {
 		return ""
 	}
 	if len(items) == 0 {
 		return box(" No data yet…", width, height, focused)
 	}
 
+	// Inner dimensions (excluding border)
+	innerW := width - 2
+	innerH := height - 2
+
 	// Grid-based rendering: each cell holds an ANSI-styled string
-	grid := make([][]string, height)
+	grid := make([][]string, innerH)
 	for y := range grid {
-		grid[y] = make([]string, width)
+		grid[y] = make([]string, innerW)
 		for x := range grid[y] {
 			grid[y][x] = " "
 		}
@@ -327,20 +338,20 @@ func RenderTreemap(items []TreemapItem, focused bool, width, height int) string 
 		// Fill the rectangle with solid background color.
 		// One lipgloss.Render per row instead of per cell.
 		endX := item.Rect.X + item.Rect.W
-		if endX > width {
-			endX = width
+		if endX > innerW {
+			endX = innerW
 		}
 		fillWidth := endX - item.Rect.X
 		if fillWidth > 0 {
 			fillStr := bgStyle.Render(strings.Repeat(" ", fillWidth))
 			fillRunes := []rune(fillStr)
-			for y := item.Rect.Y; y < item.Rect.Y+item.Rect.H && y < height; y++ {
+			for y := item.Rect.Y; y < item.Rect.Y+item.Rect.H && y < innerH; y++ {
 				if y < 0 {
 					continue
 				}
 				for i, r := range fillRunes {
 					px := item.Rect.X + i
-					if px >= 0 && px < width {
+					if px >= 0 && px < innerW {
 						grid[y][px] = string(r)
 					}
 				}
@@ -359,7 +370,7 @@ func RenderTreemap(items []TreemapItem, focused bool, width, height int) string 
 			for ci, ch := range runeLabel {
 				px := item.Rect.X + 1 + ci
 				py := item.Rect.Y
-				if px < width && py < height && px >= 0 && py >= 0 {
+				if px < innerW && py < innerH && px >= 0 && py >= 0 {
 					grid[py][px] = labelStyle.Render(string(ch))
 				}
 			}
@@ -374,7 +385,7 @@ func RenderTreemap(items []TreemapItem, focused bool, width, height int) string 
 				for ci, ch := range sizeRunes {
 					px := item.Rect.X + 1 + ci
 					py := item.Rect.Y + 1
-					if px < width && py < height && px >= 0 && py >= 0 {
+					if px < innerW && py < innerH && px >= 0 && py >= 0 {
 						grid[py][px] = sizeStyle.Render(string(ch))
 					}
 				}
@@ -383,11 +394,11 @@ func RenderTreemap(items []TreemapItem, focused bool, width, height int) string 
 	}
 
 	var sb strings.Builder
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
+	for y := 0; y < innerH; y++ {
+		for x := 0; x < innerW; x++ {
 			sb.WriteString(grid[y][x])
 		}
-		if y < height-1 {
+		if y < innerH-1 {
 			sb.WriteString("\n")
 		}
 	}
