@@ -4,6 +4,8 @@ A terminal-based disk-usage analyzer with a squarified treemap, file-type
 breakdown, and an interactive tree view. Inspired by WinDirStat, built for
 the terminal.
 
+![UnixDirStat screenshot](screenshot.png)
+
 ## Features
 
 - WinDirStat-style layout: tree + extension list on top, treemap full width below
