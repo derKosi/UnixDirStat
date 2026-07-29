@@ -114,6 +114,9 @@ func RenderFooter(width int) string {
 // ── Tree Panel ────────────────────────────────────────────────────
 
 func RenderTree(nodes []*TreeNode, totalSize int64, cursor int, focused bool, width, height int) string {
+	if height <= 0 || width <= 0 {
+		return ""
+	}
 	if len(nodes) == 0 {
 		return box(" No data yet…", width, height, focused)
 	}
@@ -230,6 +233,9 @@ func RenderTree(nodes []*TreeNode, totalSize int64, cursor int, focused bool, wi
 // ── Extension Panel ───────────────────────────────────────────────
 
 func RenderExtensions(exts []*ExtGroup, cursor int, focused bool, totalSize int64, width, height int) string {
+	if height <= 0 || width <= 0 {
+		return ""
+	}
 	if len(exts) == 0 {
 		return box(" No data yet…", width, height, focused)
 	}
@@ -290,6 +296,9 @@ func RenderExtensions(exts []*ExtGroup, cursor int, focused bool, totalSize int6
 // ── Treemap Panel ─────────────────────────────────────────────────
 
 func RenderTreemap(items []TreemapItem, focused bool, width, height int) string {
+	if height <= 0 || width <= 0 {
+		return ""
+	}
 	if len(items) == 0 {
 		return box(" No data yet…", width, height, focused)
 	}
@@ -389,18 +398,29 @@ func RenderTreemap(items []TreemapItem, focused bool, width, height int) string 
 // ── Helpers ───────────────────────────────────────────────────────
 
 // box wraps content in a bordered box that fits exactly width×height.
+// Dimensions are clamped to zero to avoid negative-argument panics.
 func box(content string, width, height int, focused bool) string {
+	if width < 0 {
+		width = 0
+	}
+	if height < 0 {
+		height = 0
+	}
 	borderFg := lipgloss.Color("#3b4261")
 	if focused {
 		borderFg = lipgloss.Color("#7aa2f7")
 	}
 
-	return lipgloss.NewStyle().
+	style := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(borderFg).
-		Width(width - 2).   // -2 for left+right border chars
-		Height(height - 2). // -2 for top+bottom border lines
-		Render(content)
+		BorderForeground(borderFg)
+	if w := width - 2; w > 0 {
+		style = style.Width(w)
+	}
+	if h := height - 2; h > 0 {
+		style = style.Height(h)
+	}
+	return style.Render(content)
 }
 
 // padRight pads a string with spaces to target display width.

@@ -388,13 +388,23 @@ func (m *Model) rebuildTreemapForSelection() {
 
 func (m *Model) recalcLayout() {
 	w, h := m.viewDims.Width, m.viewDims.Height
+
+	// Floor everything at zero so we never hand negative dimensions
+	// to the renderers (which would cause makeslice panics).
+	if w < 0 {
+		w = 0
+	}
+	if h < 0 {
+		h = 0
+	}
+
 	// Minimum terminal size; below this we just render what we can.
-	m.viewDims.TreeW = min(w-2, 40)
-	m.viewDims.TreeH = min(h-4, 5)
-	m.viewDims.ExtW = min(w-2, 20)
-	m.viewDims.ExtH = min(h-4, 5)
+	m.viewDims.TreeW = max(min(w-2, 40), 0)
+	m.viewDims.TreeH = max(min(h-4, 5), 0)
+	m.viewDims.ExtW = max(min(w-2, 20), 0)
+	m.viewDims.ExtH = max(min(h-4, 5), 0)
 	m.viewDims.TreemapW = w
-	m.viewDims.TreemapH = min(h-4, 5)
+	m.viewDims.TreemapH = max(min(h-4, 5), 0)
 	if w < 40 || h < 15 {
 		return
 	}
@@ -411,11 +421,11 @@ func (m *Model) recalcLayout() {
 	extW := w - treeW
 
 	m.viewDims.TreeW = treeW
-	m.viewDims.TreeH = topH - borderOverhead
+	m.viewDims.TreeH = max(topH-borderOverhead, 0)
 	m.viewDims.ExtW = extW
-	m.viewDims.ExtH = topH - borderOverhead
+	m.viewDims.ExtH = max(topH-borderOverhead, 0)
 	m.viewDims.TreemapW = w
-	m.viewDims.TreemapH = (usableH - topH) - borderOverhead
+	m.viewDims.TreemapH = max(usableH-topH-borderOverhead, 0)
 }
 
 // rebuildViews recomputes all derived view state: the flat (visible) tree,
