@@ -228,10 +228,14 @@ func TestSquarifyRectsDoNotOverlap(t *testing.T) {
 // ── Scanner edge cases ───────────────────────────────────────────────
 
 // TestScannerPermissionError verifies that an unreadable subdir is recorded
-// as an error, not a crash. We skip if we can't drop permissions (root).
+// as an error, not a crash. We skip if we can't drop permissions (root)
+// or on Windows where POSIX chmod has no effect.
 func TestScannerPermissionError(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("running as root: permission test meaningless")
+	}
+	if runtime.GOOS == "windows" {
+		t.Skip("chmod 0000 has no effect on Windows (ACL-based permissions)")
 	}
 	tmp := t.TempDir()
 	// Create a dir, put a file in it, then remove read+execute permission.
