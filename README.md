@@ -6,6 +6,9 @@ the terminal.
 
 ![UnixDirStat screenshot](screenshot.png)
 
+![CI](https://github.com/derKosi/UnixDirStat/actions/workflows/ci.yml/badge.svg)
+![Go Version](https://img.shields.io/badge/Go-1.24+-00ADD8?logo=go)
+
 ## Features
 
 - WinDirStat-style layout: tree + extension list on top, treemap full width below
