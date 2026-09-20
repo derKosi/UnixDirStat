@@ -64,6 +64,10 @@ The hardening in v0.1.1 is based on a full security audit by
 [z.ai](https://huggingface.co/spaces/zai-org/OpenVuln) — thanks for the
 thorough review.
 
+## License
+
+[MIT](LICENSE) © 2026 Mathias Kosinski
+
 ## Keybindings
 
 | Key      | Action                              |

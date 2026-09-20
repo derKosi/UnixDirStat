@@ -38,7 +38,7 @@ jobs:
             binary="unixdirstat-${os}-${arch}${suffix}"
             echo "Building $binary..."
             GOOS="$os" GOARCH="$arch" go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o "$binary" .
-            tar czf "${binary}.tar.gz" "$binary"
+            tar czf "${binary}.tar.gz" "$binary" LICENSE
           done
 
       - name: Create release
