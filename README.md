@@ -59,6 +59,11 @@ mounts, multi-user directories):
   replaced by a symlink pointing outside the scan root after the scan, the
   deletion is refused instead of following the redirect.
 
+The hardening in v0.1.1 is based on a full security audit by
+[OpenVuln](https://openvuln.vulnhunter.pro), powered by
+[z.ai](https://huggingface.co/spaces/zai-org/OpenVuln) — thanks for the
+thorough review.
+
 ## Keybindings
 
 | Key      | Action                              |
