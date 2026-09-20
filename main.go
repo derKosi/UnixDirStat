@@ -83,7 +83,10 @@ func runHeadless(abs string, cfg ScanConfig) {
 	if errs := s.Stats.Errors.Load(); errs > 0 {
 		fmt.Printf("  Errors:  %d\n", errs)
 		if v := s.Stats.LastError.Load(); v != nil {
-			fmt.Printf("           last: %v\n", v)
+			// LastError embeds raw attacker-influenced path bytes twice
+			// (path prefix + fs.PathError body). Neutralize control
+			// characters before echoing to the terminal.
+			fmt.Printf("           last: %v\n", SanitizeName(fmt.Sprint(v)))
 		}
 	}
 
@@ -94,7 +97,7 @@ func runHeadless(abs string, cfg ScanConfig) {
 		if i >= 15 {
 			break
 		}
-		fmt.Printf("  %-10s %8s  %5s  %d files\n", e.Ext, FormatSize(e.Size), FormatPct(e.Size, s.RootNode.Size), e.Count)
+		fmt.Printf("  %-10s %8s  %5s  %d files\n", SanitizeName(e.Ext), FormatSize(e.Size), FormatPct(e.Size, s.RootNode.Size), e.Count)
 	}
 
 	fmt.Printf("\nTop-level contents:\n")
@@ -107,7 +110,7 @@ func runHeadless(abs string, cfg ScanConfig) {
 		if child.Node.IsSymlink {
 			icon = "L"
 		}
-		fmt.Printf("  %s %-30s %8s  %5s\n", icon, child.Node.Name, FormatSize(child.Node.Size), FormatPct(child.Node.Size, s.RootNode.Size))
+		fmt.Printf("  %s %-30s %8s  %5s\n", icon, SanitizeName(child.Node.Name), FormatSize(child.Node.Size), FormatPct(child.Node.Size, s.RootNode.Size))
 	}
 
 	items := BuildTreemapItems(s.RootNode)
@@ -115,7 +118,7 @@ func runHeadless(abs string, cfg ScanConfig) {
 	fmt.Printf("\nTreemap: %d items laid out in 200x50\n", len(layout))
 	for _, item := range layout {
 		if item.Rect.W > 5 {
-			fmt.Printf("  %-30s %dx%d at (%d,%d) %s\n", item.Node.Name, item.Rect.W, item.Rect.H, item.Rect.X, item.Rect.Y, item.Color)
+			fmt.Printf("  %-30s %dx%d at (%d,%d) %s\n", SanitizeName(item.Node.Name), item.Rect.W, item.Rect.H, item.Rect.X, item.Rect.Y, item.Color)
 		}
 	}
 }
