@@ -59,7 +59,7 @@ func RenderHeader(path string, stats *ScanStats, width int, sortMode string) str
 	} else {
 		current := ""
 		if v := stats.CurrentPath.Load(); v != nil {
-			current = ShortenPath(v.(string), width-40)
+			current = ShortenPath(SanitizeName(v.(string)), width-40)
 		}
 		text = fmt.Sprintf(" Scanning… %s  %d files, %d dirs, %s", current, files, dirs, FormatSize(size))
 		if errs > 0 {
@@ -280,7 +280,7 @@ func RenderExtensions(exts []*ExtGroup, cursor int, focused bool, totalSize int6
 		block := colorStyle.Render(strings.Repeat("█", barLen))
 		empty := lipgloss.NewStyle().Foreground(lipgloss.Color("#1a1b26")).Render(strings.Repeat("░", 20-barLen))
 
-		extLabel := lipgloss.NewStyle().Foreground(lipgloss.Color(ext.Color)).Bold(true).Render(fmt.Sprintf("%-8s", ext.Ext))
+		extLabel := lipgloss.NewStyle().Foreground(lipgloss.Color(ext.Color)).Bold(true).Render(fmt.Sprintf("%-8s", SanitizeName(ext.Ext)))
 		line := fmt.Sprintf("%s %3d  %8s %5s %s%s", extLabel, ext.Count, FormatSize(ext.Size), pct, block, empty)
 
 		if isCursor && focused {
@@ -360,7 +360,7 @@ func RenderTreemap(items []TreemapItem, focused bool, width, height int) string 
 
 		// Render label on top if big enough
 		if item.Rect.W >= 6 && item.Rect.H >= 2 {
-			label := item.Node.Name
+			label := SanitizeName(item.Node.Name)
 			maxLabel := item.Rect.W - 2
 			runeLabel := []rune(label)
 			if len(runeLabel) > maxLabel {

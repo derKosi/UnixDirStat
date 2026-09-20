@@ -107,6 +107,8 @@ func SanitizeName(name string) string {
 		sb.WriteString("\\t")
 		case r < 0x20:
 			sb.WriteString("?")
+		case r == 0x7F || (r >= 0x80 && r <= 0x9F):
+			sb.WriteString("?")
 		default:
 			sb.WriteRune(r)
 		}

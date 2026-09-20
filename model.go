@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -218,6 +219,11 @@ func (m *Model) handleModal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if node == nil {
 				return m, nil
 			}
+			if verr := m.validateDeleteTarget(node); verr != nil {
+				m.modal = modalMessage
+				m.modalMsg = "Refusing to delete: " + verr.Error()
+				return m, nil
+			}
 			var err error
 			if node.IsDir {
 				err = os.RemoveAll(node.Path)
@@ -266,6 +272,30 @@ func (m *Model) startDelete() tea.Model {
 	m.modal = modalConfirmDelete
 	m.modalNode = node
 	return m
+}
+
+// validateDeleteTarget refuses destructive operations whose path resolves
+// (through any symlinked intermediate component, including -L-followed
+// directory links) outside the scan root, so a planted link cannot turn a
+// confirmed in-root deletion into out-of-root destruction. Applied in ALL
+// modes — do not exempt FollowSymlinks, or the -L static-link variant
+// stays open.
+func (m *Model) validateDeleteTarget(node *FileNode) error {
+	if m.scanner == nil {
+		return fmt.Errorf("no active scan")
+	}
+	root, err := filepath.EvalSymlinks(m.scanner.Root)
+	if err != nil {
+		return fmt.Errorf("cannot resolve scan root: %w", err)
+	}
+	parent, err := filepath.EvalSymlinks(filepath.Dir(node.Path))
+	if err != nil {
+		return fmt.Errorf("cannot resolve target directory: %w", err)
+	}
+	if parent != root && !strings.HasPrefix(parent, root+string(os.PathSeparator)) {
+		return fmt.Errorf("target resolves outside the scan root (to %s)", parent)
+	}
+	return nil
 }
 
 // rescan re-creates the scanner with the current path+config and clears
@@ -628,7 +658,7 @@ func (m Model) renderModalScreen() string {
 			if node.IsSymlink {
 				kind = "symlink"
 			}
-			path = node.Path
+			path = SanitizeName(node.Path)
 			size = FormatSize(node.Size)
 		}
 		body = fmt.Sprintf("Delete this %s?\n\n  %s\n  Size: %s", kind, path, size)
@@ -636,7 +666,7 @@ func (m Model) renderModalScreen() string {
 
 	case modalMessage:
 		title = "Message"
-		body = m.modalMsg
+		body = SanitizeName(m.modalMsg)
 		hint = "Press any key to dismiss"
 	}
 

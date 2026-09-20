@@ -18,6 +18,8 @@ the terminal.
 - Interactive tree view with expand/collapse
 - Arrow-key navigation (left/right collapse/expand + descend, like Explorer)
 - Delete files/dirs from within the TUI (with confirmation)
+- Delete safety: targets are re-validated immediately before deletion — a path whose ancestors were swapped for symlinks since the scan (redirecting the delete outside the scan root) is refused
+- Untrusted filenames are neutralized everywhere they're rendered (TUI panels, modals, headless `-scan` output) — crafted escape sequences in filenames can't hijack your terminal
 - Three sort modes: size, name, file count
 - Dotfile visibility toggle
 - Breadcrumb path display
@@ -44,6 +46,23 @@ go build -o unixdirstat .
 # Limit concurrent workers
 ./unixdirstat -workers 32 [path]
 ```
+
+## Security notes
+
+The scanned tree is treated as untrusted input (extracted archives, shared
+mounts, multi-user directories):
+
+- Filenames and derived strings are sanitized before rendering (`ESC`, `BEL`,
+  raw `LF`, DEL and C1 bytes are neutralized) — hostile names cannot inject
+  terminal control sequences into the TUI or the `-scan` output.
+- Deletions are re-validated at confirm time: if an ancestor of the target was
+  replaced by a symlink pointing outside the scan root after the scan, the
+  deletion is refused instead of following the redirect.
+
+The hardening in v0.1.1 is based on a full security audit by
+[OpenVuln](https://openvuln.vulnhunter.pro), powered by
+[z.ai](https://huggingface.co/spaces/zai-org/OpenVuln) — thanks for the
+thorough review.
 
 ## Keybindings
 
